@@ -1,1 +1,840 @@
 
+-- BYTE | Rivals Rage + Deadline ESP | v2
+-- RightShift = toggle UI | Insert = ESP | End = hard destroy
+-- UI is fully draggable
+
+local Players = cloneref(game:GetService("Players"))
+local RunService = cloneref(game:GetService("RunService"))
+local UserInputService = cloneref(game:GetService("UserInputService"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local Workspace = cloneref(game:GetService("Workspace"))
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- safe requires
+local util, enum, FighterController, SpectateController
+pcall(function()
+    util = require(ReplicatedStorage.Modules.Utility)
+    enum = require(ReplicatedStorage.Modules.EnumLibrary)
+    FighterController = require(LocalPlayer.PlayerScripts.Controllers.FighterController)
+    SpectateController = require(LocalPlayer.PlayerScripts.Controllers:WaitForChild("SpectateController"))
+end)
+
+getgenv().Config = getgenv().Config or {
+    Enabled = true,
+    FireRate = 0.0005,
+    WeaponSlot = "Primary",
+    EmoteID = 83194012641579,
+    StopOnMove = false,
+    FadeIn = 0.1,
+    FadeOut = 0.1,
+    Weight = 1,
+    Speed = 1,
+    AllowInvisible = true,
+    RandomTeleport = true,
+    MinTeleportRadius = 3,
+    MaxTeleportRadius = 8,
+    HeightOffsetMin = -1,
+    HeightOffsetMax = 3,
+    BehindDistance = 5,
+    DeathDropThreshold = -5.5,
+    MinBoundsY = 0,
+    MaxBoundsY = 200,
+    MaxDistanceFromTarget = 25,
+    ESPEnabled = true,
+    ChamsEnabled = true,
+    TracerEnabled = true,
+    BoxEnabled = true,
+    NameEnabled = true,
+    FOV = 180,               -- aimbot FOV
+    ShowFOV = true,          -- FOV circle
+    SilentAim = true,
+}
+
+-- ===================== BASIC AC PROTECTION =====================
+-- blocks common kick / teleport / remote spam detection patterns
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+
+mt.__namecall = newcclosure(function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+
+    -- block Kick
+    if method == "Kick" or method == "kick" then
+        return
+    end
+
+    -- block common anti-cheat remote names
+    if typeof(self) == "Instance" and self:IsA("RemoteEvent") then
+        local name = self.Name:lower()
+        if name:find("kick") or name:find("ban") or name:find("detect") or name:find("anticheat") or name:find("report") then
+            return
+        end
+    end
+
+    return oldNamecall(self, ...)
+end)
+
+setreadonly(mt, true)
+
+-- anti void / anti force teleport
+RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp and hrp.Position.Y < -40 then
+        hrp.CFrame = CFrame.new(hrp.Position.X, 50, hrp.Position.Z)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
+end)
+
+-- ===================== UI =====================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BytePanel"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = CoreGui
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.Size = UDim2.new(0, 440, 0, 420)
+Main.Position = UDim2.new(0.5, -220, 0.5, -210)
+Main.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Draggable = false -- we do custom drag
+Main.Visible = true
+Main.Parent = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
+
+-- Title bar (drag handle)
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 38)
+TitleBar.BackgroundColor3 = Color3.fromRGB(26, 26, 32)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = Main
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -80, 1, 0)
+Title.Position = UDim2.new(0, 12, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "BYTE  |  RIVALS + DEADLINE"
+Title.TextColor3 = Color3.fromRGB(230, 230, 240)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 38, 0, 38)
+CloseBtn.Position = UDim2.new(1, -38, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 90, 90)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+CloseBtn.Parent = TitleBar
+CloseBtn.MouseButton1Click:Connect(function()
+    Main.Visible = false
+end)
+
+-- custom drag
+local dragging, dragStart, startPos
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+end)
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- Tabs
+local TabBar = Instance.new("Frame")
+TabBar.Size = UDim2.new(1, -16, 0, 32)
+TabBar.Position = UDim2.new(0, 8, 0, 46)
+TabBar.BackgroundTransparency = 1
+TabBar.Parent = Main
+
+local Tabs = {"Rage", "ESP", "Misc", "Config"}
+local TabButtons = {}
+local Pages = {}
+
+local function makeTab(name, idx)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 100, 1, 0)
+    btn.Position = UDim2.new(0, (idx-1)*104, 0, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(32, 32, 40)
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(200, 200, 210)
+    btn.Font = Enum.Font.GothamMedium
+    btn.TextSize = 13
+    btn.Parent = TabBar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local page = Instance.new("ScrollingFrame")
+    page.Size = UDim2.new(1, -16, 1, -90)
+    page.Position = UDim2.new(0, 8, 0, 86)
+    page.BackgroundTransparency = 1
+    page.BorderSizePixel = 0
+    page.ScrollBarThickness = 3
+    page.Visible = (idx == 1)
+    page.CanvasSize = UDim2.new(0, 0, 0, 700)
+    page.Parent = Main
+
+    TabButtons[name] = btn
+    Pages[name] = page
+
+    btn.MouseButton1Click:Connect(function()
+        for n, p in pairs(Pages) do
+            p.Visible = (n == name)
+            TabButtons[n].BackgroundColor3 = (n == name) and Color3.fromRGB(55, 55, 70) or Color3.fromRGB(32, 32, 40)
+        end
+    end)
+end
+
+for i, name in ipairs(Tabs) do makeTab(name, i) end
+TabButtons["Rage"].BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+
+local function addToggle(parent, text, flag, y)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 32)
+    frame.Position = UDim2.new(0, 0, 0, y)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.7, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(210, 210, 220)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = frame
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 70, 0, 24)
+    btn.Position = UDim2.new(1, -70, 0.5, -12)
+    btn.BackgroundColor3 = getgenv().Config[flag] and Color3.fromRGB(40, 160, 40) or Color3.fromRGB(140, 40, 40)
+    btn.Text = getgenv().Config[flag] and "ON" or "OFF"
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 12
+    btn.Parent = frame
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    btn.MouseButton1Click:Connect(function()
+        getgenv().Config[flag] = not getgenv().Config[flag]
+        btn.Text = getgenv().Config[flag] and "ON" or "OFF"
+        btn.BackgroundColor3 = getgenv().Config[flag] and Color3.fromRGB(40, 160, 40) or Color3.fromRGB(140, 40, 40)
+    end)
+end
+
+local function addSlider(parent, text, flag, min, max, y)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 48)
+    frame.Position = UDim2.new(0, 0, 0, y)
+    frame.BackgroundTransparency = 1
+    frame.Parent = parent
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 18)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text .. ": " .. tostring(getgenv().Config[flag])
+    lbl.TextColor3 = Color3.fromRGB(210, 210, 220)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = frame
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 0, 8)
+    bar.Position = UDim2.new(0, 0, 0, 28)
+    bar.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    bar.BorderSizePixel = 0
+    bar.Parent = frame
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 4)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(math.clamp((getgenv().Config[flag]-min)/(max-min), 0, 1), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(80, 140, 255)
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(0, 4)
+
+    local draggingSlider = false
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingSlider = true end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingSlider = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local rel = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+            local val = min + rel * (max - min)
+            if flag == "FireRate" then val = math.floor(val * 10000) / 10000 end
+            if flag == "FOV" then val = math.floor(val) end
+            getgenv().Config[flag] = val
+            fill.Size = UDim2.new(rel, 0, 1, 0)
+            lbl.Text = text .. ": " .. tostring(val)
+        end
+    end)
+end
+
+-- Rage tab
+addToggle(Pages.Rage, "Ragebot Enabled", "Enabled", 8)
+addToggle(Pages.Rage, "Show FOV Circle", "ShowFOV", 44)
+addToggle(Pages.Rage, "Random Teleport", "RandomTeleport", 80)
+addToggle(Pages.Rage, "Allow Invisible", "AllowInvisible", 116)
+addSlider(Pages.Rage, "FOV", "FOV", 30, 360, 160)
+addSlider(Pages.Rage, "Fire Rate", "FireRate", 0.0001, 0.05, 220)
+addSlider(Pages.Rage, "Min TP Radius", "MinTeleportRadius", 1, 15, 280)
+addSlider(Pages.Rage, "Max TP Radius", "MaxTeleportRadius", 2, 25, 340)
+addSlider(Pages.Rage, "Behind Distance", "BehindDistance", 1, 15, 400)
+
+local weaponBtn = Instance.new("TextButton")
+weaponBtn.Size = UDim2.new(1, 0, 0, 32)
+weaponBtn.Position = UDim2.new(0, 0, 0, 470)
+weaponBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+weaponBtn.Text = "Weapon: " .. getgenv().Config.WeaponSlot
+weaponBtn.TextColor3 = Color3.new(1,1,1)
+weaponBtn.Font = Enum.Font.GothamMedium
+weaponBtn.TextSize = 13
+weaponBtn.Parent = Pages.Rage
+Instance.new("UICorner", weaponBtn).CornerRadius = UDim.new(0, 6)
+local slotsList = {"Primary", "Secondary", "Melee"}
+local slotIdx = 1
+weaponBtn.MouseButton1Click:Connect(function()
+    slotIdx = slotIdx % #slotsList + 1
+    getgenv().Config.WeaponSlot = slotsList[slotIdx]
+    weaponBtn.Text = "Weapon: " .. slotsList[slotIdx]
+end)
+
+-- ESP tab
+addToggle(Pages.ESP, "ESP Enabled", "ESPEnabled", 8)
+addToggle(Pages.ESP, "Chams", "ChamsEnabled", 44)
+addToggle(Pages.ESP, "Boxes", "BoxEnabled", 80)
+addToggle(Pages.ESP, "Names", "NameEnabled", 116)
+addToggle(Pages.ESP, "Tracers", "TracerEnabled", 152)
+
+-- Misc
+addToggle(Pages.Misc, "Stop Emote On Move", "StopOnMove", 8)
+
+-- Config
+local destroyBtn = Instance.new("TextButton")
+destroyBtn.Size = UDim2.new(1, 0, 0, 36)
+destroyBtn.Position = UDim2.new(0, 0, 0, 20)
+destroyBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+destroyBtn.Text = "HARD DESTROY ALL"
+destroyBtn.TextColor3 = Color3.new(1,1,1)
+destroyBtn.Font = Enum.Font.GothamBold
+destroyBtn.TextSize = 14
+destroyBtn.Parent = Pages.Config
+Instance.new("UICorner", destroyBtn).CornerRadius = UDim.new(0, 6)
+
+-- open / close
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        Main.Visible = not Main.Visible
+    end
+end)
+
+-- ===================== FOV CIRCLE =====================
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 1.5
+FOVCircle.NumSides = 64
+FOVCircle.Radius = getgenv().Config.FOV
+FOVCircle.Filled = false
+FOVCircle.Color = Color3.fromRGB(0, 200, 255)
+FOVCircle.Transparency = 0.7
+FOVCircle.Visible = false
+
+RunService.RenderStepped:Connect(function()
+    FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    FOVCircle.Radius = getgenv().Config.FOV
+    FOVCircle.Visible = getgenv().Config.ShowFOV and getgenv().Config.Enabled
+end)
+
+-- ===================== RAGEBOT CORE =====================
+local slots = {Primary = 1, Secondary = 2, Melee = 3}
+local function getSlotNumber()
+    return slots[getgenv().Config.WeaponSlot] or 1
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if not getgenv().Config.Enabled then continue end
+        local localFighter = FighterController and FighterController.LocalFighter
+        if localFighter then
+            pcall(function() localFighter:EquipItem(getSlotNumber()) end)
+        end
+    end
+end)
+
+-- hazard cleaner
+local function handleDangerousItems()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        local name = obj.Name:lower()
+        if name:find("kill") or name:find("lava") or name:find("death") or name:find("hazard") or name:find("damage") or name:find("chainsaw") or name:find("subspace tripmine") then
+            pcall(function()
+                if obj:IsA("BasePart") then
+                    obj.CFrame = CFrame.new(obj.Position.X, -500, obj.Position.Z)
+                    obj.AssemblyLinearVelocity = Vector3.zero
+                    obj.AssemblyAngularVelocity = Vector3.zero
+                    obj.Anchored = true
+                elseif obj:IsA("Model") then
+                    local primary = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                    if primary then
+                        primary.CFrame = CFrame.new(primary.Position.X, -500, primary.Position.Z)
+                        primary.Anchored = true
+                    end
+                end
+            end)
+        end
+    end
+end
+task.spawn(function()
+    while true do
+        handleDangerousItems()
+        task.wait(0.5)
+    end
+end)
+Workspace.DescendantAdded:Connect(function(obj)
+    local name = obj.Name:lower()
+    if name:find("kill") or name:find("lava") or name:find("death") or name:find("hazard") or name:find("damage") or name:find("chainsaw") or name:find("subspace tripmine") then
+        pcall(function()
+            if obj:IsA("BasePart") then
+                obj.CFrame = CFrame.new(obj.Position.X, -500, obj.Position.Z)
+                obj.Anchored = true
+            end
+        end)
+    end
+end)
+
+-- emote
+local CurrentTrack
+local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local lastPosition = character.PrimaryPart and character.PrimaryPart.Position or Vector3.new()
+
+local function LoadTrack(id)
+    if CurrentTrack then CurrentTrack:Stop(0) end
+    local animId = "rbxassetid://" .. tostring(id)
+    local ok, result = pcall(function() return game:GetObjects(animId) end)
+    if ok and result and #result > 0 then
+        local anim = result[1]
+        if anim:IsA("Animation") then animId = anim.AnimationId end
+    end
+    local newAnim = Instance.new("Animation")
+    newAnim.AnimationId = animId
+    local newTrack = humanoid:LoadAnimation(newAnim)
+    newTrack.Priority = Enum.AnimationPriority.Action4
+    local weight = getgenv().Config.Weight == 0 and 0.001 or getgenv().Config.Weight
+    newTrack:Play(getgenv().Config.FadeIn, weight, getgenv().Config.Speed)
+    CurrentTrack = newTrack
+    return newTrack
+end
+task.spawn(function()
+    task.wait(1)
+    pcall(function() LoadTrack(getgenv().Config.EmoteID) end)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+    character = newCharacter
+    humanoid = character:WaitForChild("Humanoid")
+    lastPosition = character.PrimaryPart and character.PrimaryPart.Position or Vector3.new()
+    task.wait(1)
+    pcall(function() LoadTrack(getgenv().Config.EmoteID) end)
+end)
+
+-- collision
+local originalCollisionStates = {}
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local function saveCollisionStates()
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part ~= humanoidRootPart then
+            originalCollisionStates[part] = part.CanCollide
+        end
+    end
+end
+local function disableCollisionsExceptRootPart()
+    if not getgenv().Config.AllowInvisible then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part ~= humanoidRootPart then
+            part.CanCollide = false
+        end
+    end
+end
+saveCollisionStates()
+RunService.Stepped:Connect(function()
+    if character and character.Parent and getgenv().Config.AllowInvisible then
+        disableCollisionsExceptRootPart()
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if character.PrimaryPart then
+        if getgenv().Config.StopOnMove and CurrentTrack and CurrentTrack.IsPlaying then
+            local moved = (character.PrimaryPart.Position - lastPosition).Magnitude > 0.1
+            local jumped = humanoid and humanoid:GetState() == Enum.HumanoidStateType.Jumping
+            if moved or jumped then
+                CurrentTrack:Stop(getgenv().Config.FadeOut)
+                CurrentTrack = nil
+            end
+        end
+        lastPosition = character.PrimaryPart.Position
+    end
+end)
+
+-- targeting + FOV check
+local lastFire = 0
+local deflecting = {}
+Players.PlayerRemoving:Connect(function(player) deflecting[player] = nil end)
+
+local function updateDeflection()
+    if not FighterController or not FighterController.Objects then return end
+    for _, fighterObj in FighterController.Objects do
+        local player = fighterObj.Player
+        if not player then continue end
+        if not fighterObj.Entity or not fighterObj.Entity:IsAlive() or fighterObj:Get("IsSpectating") then
+            deflecting[player] = false
+            continue
+        end
+        local equipped = fighterObj.EquippedItem
+        local itemName = equipped and equipped.ViewModel and equipped.ViewModel.Name or ""
+        local isDeflecting = (itemName == "Katana" or itemName == "Chainsaw") and (equipped._attack_cooldown and equipped._attack_cooldown > tick()) or false
+        deflecting[player] = isDeflecting
+    end
+end
+
+local function isEnemy(player)
+    if player == LocalPlayer then return false end
+    local duel = SpectateController and SpectateController.CurrentDuelSubject
+    local localDueler = duel and duel:GetDueler(LocalPlayer)
+    local localTeam = localDueler and localDueler:Get("TeamID") or nil
+    if localTeam and duel and duel.Duelers then
+        for _, dueler in duel.Duelers do
+            if dueler.Player == player then
+                return dueler:Get("TeamID") ~= localTeam
+            end
+        end
+    end
+    local pTeam = player:GetAttribute("TeamID")
+    local lTeam = LocalPlayer:GetAttribute("TeamID")
+    if pTeam and lTeam then return pTeam ~= lTeam end
+    return true
+end
+
+local function getClosestTarget()
+    local char = LocalPlayer.Character
+    if not char then return nil, nil, nil end
+    local myRoot = char:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return nil, nil, nil end
+
+    local closestPlayer, closestRoot, closestHead = nil, nil, nil
+    local closestDist = math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+
+    for _, player in Players:GetPlayers() do
+        if not isEnemy(player) then continue end
+        local pChar = player.Character
+        if not pChar then continue end
+        local pRoot = pChar:FindFirstChild("HumanoidRootPart")
+        local pHead = pChar:FindFirstChild("Head")
+        local pHum = pChar:FindFirstChildWhichIsA("Humanoid")
+        if not (pRoot and pHead and pHum) or pHum.Health <= 0 then continue end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(pHead.Position)
+        if not onScreen then continue end
+
+        local distFromCenter = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
+        if distFromCenter > getgenv().Config.FOV then continue end
+
+        local worldDist = (myRoot.Position - pRoot.Position).Magnitude
+        if worldDist < closestDist then
+            closestDist = worldDist
+            closestPlayer = player
+            closestRoot = pRoot
+            closestHead = pHead
+        end
+    end
+    return closestPlayer, closestRoot, closestHead
+end
+
+RunService.Heartbeat:Connect(function()
+    updateDeflection()
+    local targetPlayer, targetRoot, targetHead = getClosestTarget()
+    local desyncCF = nil
+
+    if targetPlayer and targetRoot and targetHead then
+        local pHum = targetPlayer.Character and targetPlayer.Character:FindFirstChildWhichIsA("Humanoid")
+        local isTargetDead = (not pHum or pHum.Health <= 0 or pHum.Health <= -150)
+
+        if isTargetDead then
+            local dropPos = targetRoot.Position + Vector3.new(0, getgenv().Config.DeathDropThreshold, 0)
+            desyncCF = CFrame.new(dropPos)
+        else
+            local targetPos = targetRoot.Position
+            if getgenv().Config.RandomTeleport then
+                local angle = math.random() * math.pi * 2
+                local radius = math.random(getgenv().Config.MinTeleportRadius * 10, getgenv().Config.MaxTeleportRadius * 10) / 10
+                local height = math.random(getgenv().Config.HeightOffsetMin * 10, getgenv().Config.HeightOffsetMax * 10) / 10
+                local randomOffset = Vector3.new(math.cos(angle) * radius, height, math.sin(angle) * radius)
+                targetPos = targetRoot.Position + randomOffset
+            else
+                local behindOffset = Vector3.new(0, 0, getgenv().Config.BehindDistance)
+                targetPos = targetRoot.CFrame:PointToWorldSpace(behindOffset)
+            end
+            local validPos = true
+            if targetPos.Y < getgenv().Config.MinBoundsY or targetPos.Y > getgenv().Config.MaxBoundsY then
+                validPos = false
+            end
+            if (targetPos - targetRoot.Position).Magnitude > getgenv().Config.MaxDistanceFromTarget then
+                validPos = false
+            end
+            if not validPos then
+                targetPos = targetRoot.Position + Vector3.new(0, 2, 2)
+            end
+            desyncCF = CFrame.lookAt(targetPos, targetHead.Position) * CFrame.Angles(math.rad(180), 0, 0)
+        end
+    else
+        local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot then desyncCF = myRoot.CFrame end
+    end
+
+    if desyncCF and LocalPlayer.Character then
+        local myRoot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot then
+            local oldCF = myRoot.CFrame
+            local oldVel = myRoot.Velocity
+            local oldRotVel = myRoot.RotVelocity
+            myRoot.CFrame = desyncCF
+            RunService:BindToRenderStep("__restore", 101, function()
+                if myRoot then
+                    myRoot.CFrame = oldCF
+                    myRoot.Velocity = oldVel
+                    myRoot.RotVelocity = oldRotVel
+                end
+                RunService:UnbindFromRenderStep("__restore")
+            end)
+        end
+    end
+
+    if not getgenv().Config.Enabled then return end
+    if not targetPlayer or not targetHead or not targetRoot then return end
+    local pHum = targetPlayer.Character and targetPlayer.Character:FindFirstChildWhichIsA("Humanoid")
+    if not pHum or pHum.Health <= 0 or pHum.Health <= -150 then return end
+    if deflecting[targetPlayer] then return end
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    if not FighterController or not FighterController.LocalFighter then return end
+    local item = FighterController.LocalFighter.EquippedItem
+    if not item then return end
+    if tick() - lastFire < getgenv().Config.FireRate then return end
+    lastFire = tick()
+
+    local originPos = desyncCF and desyncCF.Position or targetRoot.Position
+    local targetPos = targetHead.Position
+    local aimCF = CFrame.lookAt(originPos, targetPos)
+    local targetCF = targetHead.CFrame
+    local randomOffset = Vector3.new((math.random() - 0.5) * 0.1, (math.random() - 0.5) * 0.1, (math.random() - 0.5) * 0.1)
+    local aimedPos = targetPos + randomOffset
+    local objSpaceHeadOffset = targetHead.CFrame:ToObjectSpace(CFrame.new(aimedPos))
+    local cameradata = {}
+    local utf8_char_1 = string.char(1)
+    local utf8_char_0 = string.char(0)
+    local utf8_char_2 = string.char(2)
+    local utf8_char_3 = string.char(3)
+    cameradata[utf8_char_1] = {
+        [utf8_char_0] = util:EncodeCFrame(aimCF),
+        [utf8_char_1] = util:EncodeCFrame(targetCF),
+        [utf8_char_2] = targetHead,
+        [utf8_char_3] = util:EncodeCFrame(objSpaceHeadOffset)
+    }
+    ReplicatedStorage.Remotes.Replication.Fighter.UseItem:FireServer(
+        item:Get("ObjectID"),
+        enum:ToEnum("StartShooting"),
+        cameradata,
+        nil
+    )
+end)
+
+-- ===================== ESP + CHAMS =====================
+local CharFolder = Workspace:FindFirstChild("characters") or Workspace:WaitForChild("characters", 5)
+local DRAWINGS = {}
+local CHAMS = {}
+local CreationConnection = nil
+
+local function getRoot(model)
+    return model:FindFirstChild("HumanoidRootPart") or model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function createESP(model)
+    if DRAWINGS[model] then return end
+    local drawings = {
+        Box = Drawing.new("Square"),
+        Name = Drawing.new("Text"),
+        Tracer = Drawing.new("Line")
+    }
+    drawings.Box.Thickness = 1
+    drawings.Box.Filled = false
+    drawings.Box.Transparency = 1
+    drawings.Box.Color = Color3.fromRGB(0, 255, 255)
+    drawings.Name.Size = 13
+    drawings.Name.Center = true
+    drawings.Name.Outline = true
+    drawings.Name.Font = 2
+    drawings.Name.Color = Color3.fromRGB(255, 255, 100)
+    drawings.Tracer.Thickness = 1
+    drawings.Tracer.Transparency = 0.75
+    drawings.Tracer.Color = Color3.fromRGB(255, 0, 0)
+    DRAWINGS[model] = drawings
+end
+
+local function createChams(model)
+    if CHAMS[model] then return end
+    local highlight = Instance.new("Highlight")
+    highlight.FillColor = Color3.fromRGB(255, 165, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+    highlight.FillTransparency = 0.65
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Adornee = model
+    highlight.Parent = model
+    CHAMS[model] = highlight
+end
+
+local function updateESP()
+    for model, drawings in pairs(DRAWINGS) do
+        if not model.Parent or not getRoot(model) then
+            for _, d in pairs(drawings) do d.Visible = false end
+            continue
+        end
+        local root = getRoot(model)
+        local rootPos, onScreen = Camera:WorldToViewportPoint(root.Position)
+        if not onScreen or rootPos.Z < 0 or not getgenv().Config.ESPEnabled then
+            for _, d in pairs(drawings) do d.Visible = false end
+            continue
+        end
+
+        local topPos = Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 2.5, 0))
+        local bottomPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+        local boxHeight = math.abs(topPos.Y - bottomPos.Y)
+        local boxWidth = boxHeight * 0.6
+        local boxPos = Vector2.new(rootPos.X - boxWidth/2, math.min(topPos.Y, bottomPos.Y))
+
+        if getgenv().Config.BoxEnabled then
+            drawings.Box.Size = Vector2.new(boxWidth, boxHeight)
+            drawings.Box.Position = boxPos
+            drawings.Box.Visible = true
+        else
+            drawings.Box.Visible = false
+        end
+
+        if getgenv().Config.NameEnabled then
+            local dist = math.floor((root.Position - (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position or root.Position)).Magnitude)
+            drawings.Name.Text = model.Name .. " [" .. dist .. "m]"
+            drawings.Name.Position = Vector2.new(rootPos.X, boxPos.Y - 20)
+            drawings.Name.Visible = true
+        else
+            drawings.Name.Visible = false
+        end
+
+        if getgenv().Config.TracerEnabled then
+            drawings.Tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+            drawings.Tracer.To = Vector2.new(rootPos.X, bottomPos.Y)
+            drawings.Tracer.Visible = true
+        else
+            drawings.Tracer.Visible = false
+        end
+    end
+
+    for model, h in pairs(CHAMS) do
+        if h and h.Parent then
+            h.Enabled = getgenv().Config.ESPEnabled and getgenv().Config.ChamsEnabled
+        end
+    end
+end
+
+if CharFolder then
+    for _, model in ipairs(CharFolder:GetChildren()) do
+        if getRoot(model) then
+            createESP(model)
+            createChams(model)
+        end
+    end
+    CreationConnection = CharFolder.ChildAdded:Connect(function(model)
+        task.wait(0.3)
+        if getRoot(model) then
+            createESP(model)
+            createChams(model)
+        end
+    end)
+end
+
+RunService.RenderStepped:Connect(updateESP)
+
+-- hard destroy
+local function HardDestroy()
+    FOVCircle.Visible = false
+    pcall(function() FOVCircle:Remove() end)
+    for _, drawings in pairs(DRAWINGS) do
+        for _, d in pairs(drawings) do pcall(function() d:Remove() end) end
+    end
+    for _, h in pairs(CHAMS) do
+        pcall(function() h:Destroy() end)
+    end
+    if CharFolder then
+        for _, model in ipairs(CharFolder:GetChildren()) do
+            for _, obj in ipairs(model:GetDescendants()) do
+                if obj:IsA("Highlight") then pcall(function() obj:Destroy() end) end
+            end
+        end
+    end
+    if CreationConnection then
+        CreationConnection:Disconnect()
+        CreationConnection = nil
+    end
+    DRAWINGS = {}
+    CHAMS = {}
+    getgenv().Config.ESPEnabled = false
+    getgenv().Config.Enabled = false
+    if ScreenGui then ScreenGui:Destroy() end
+    print("[BYTE] Hard destroy complete")
+end
+
+destroyBtn.MouseButton1Click:Connect(HardDestroy)
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.Insert then
+        getgenv().Config.ESPEnabled = not getgenv().Config.ESPEnabled
+        print("ESP →", getgenv().Config.ESPEnabled)
+    elseif input.KeyCode == Enum.KeyCode.End then
+        HardDestroy()
+    end
+end)
+
+print("[BYTE] v2 loaded")
+print("RightShift = open/close UI (drag title bar)")
+print("Insert = ESP | End = destroy")
